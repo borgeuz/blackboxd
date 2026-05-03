@@ -1,0 +1,75 @@
+; blackboxd systemd service unit — hardened.
+;
+; Install path: /etc/systemd/system/blackboxd.service
+;
+; The User/Group `blackboxd` must exist (created by the meta-blackboxd
+; Yocto recipe / package install). The state directory must exist with
+; mode 0700 owned by that user. The certificate files must be mode 0600
+; owned by that user.
+
+[Unit]
+Description=Blackbox on-device log collection daemon
+Documentation=https://github.com/borgeuz/blackboxd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/blackboxd --config /etc/blackboxd/blackboxd.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+; --- Identity --------------------------------------------------------------
+User=blackboxd
+Group=blackboxd
+; CAP_SYSLOG only if /dev/kmsg is configured as a source; otherwise
+; the entire CapabilityBoundingSet must remain empty.
+CapabilityBoundingSet=CAP_SYSLOG
+AmbientCapabilities=CAP_SYSLOG
+
+; --- Filesystem ------------------------------------------------------------
+ReadWritePaths=/var/lib/blackboxd
+ReadOnlyPaths=/etc/blackboxd
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=false   ; required when CAP_SYSLOG is in use
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+
+; --- Process ---------------------------------------------------------------
+NoNewPrivileges=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+; --- Network ---------------------------------------------------------------
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+; The broker address is configured per-deployment; replace the
+; IPAddressAllow line above with the broker's IP/CIDR.
+
+; --- Resource limits -------------------------------------------------------
+MemoryHigh=64M
+MemoryMax=128M
+TasksMax=64
+LimitNOFILE=512
+
+; --- Journal ---------------------------------------------------------------
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=blackboxd
+
+[Install]
+WantedBy=multi-user.target

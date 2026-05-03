@@ -1,0 +1,172 @@
+# ==============================================================================
+# blackboxd configuration — annotated example
+# ==============================================================================
+# Default install path: /etc/blackboxd/blackboxd.toml
+# Override with: blackboxd --config /path/to/conf.toml
+#
+# Validate before reload:
+#   blackboxd validate /etc/blackboxd/blackboxd.toml
+#
+# This file is the canonical reference. Any field not documented here
+# is not supported.
+# ==============================================================================
+
+
+# ------------------------------------------------------------------------------
+# [daemon] — process-level identity and operational knobs
+# ------------------------------------------------------------------------------
+[daemon]
+# Unique device identifier in the fleet. Embedded in the MQTT topic.
+# Allowed characters: A-Z, a-z, 0-9, underscore, hyphen. Length 1..64.
+# REQUIRED.
+device_id = "factory-a-line3-dev042"
+
+# Customer / organisation namespace. Same charset as device_id.
+# REQUIRED.
+tenant = "acme-corp"
+
+# Persistent state directory: source offsets, MQTT spool, etc.
+# Must be a directory mode 0700 owned by the daemon user.
+state_dir = "/var/lib/blackboxd"
+
+# slog level for the daemon's own diagnostic output (NOT for the
+# collected logs themselves). One of: debug, info, warn, error.
+log_level = "info"
+
+# Optional: extend or replace the path-allowlist applied to source
+# definitions. Empty → use the built-in default
+# (/var/log, /var/log/journal, /var/lib/blackboxd, /dev/kmsg, /run/log/journal).
+# allowed_path_prefixes = ["/var/log", "/var/lib/blackboxd"]
+
+
+# ------------------------------------------------------------------------------
+# [parsers] — define each parser instance referenceable by sources
+# ------------------------------------------------------------------------------
+# Schema:
+#   [parsers.<name>]
+#   type = "<registered-type>"
+#   <type-specific options>
+#
+# Native v1 types: syslog_bsd, syslog_rfc5424, kmsg, journald, dmesg.
+
+[parsers.bsd]
+type = "syslog_bsd"
+# RFC 3164 omits the year and timezone; supply both here.
+default_year = 2026
+timezone = "Europe/Rome"
+# Strict rejects deviations from the RFC. Default false.
+strict = false
+
+[parsers.rfc5424]
+type = "syslog_rfc5424"
+# RFC 5424 carries timezone in the timestamp itself; nothing to set.
+
+[parsers.kmsg]
+type = "kmsg"
+# Optional: pin a wall-clock anchor for /proc/uptime conversions.
+# boot_time = "2026-05-01T08:00:00Z"
+
+[parsers.journal]
+type = "journald"
+
+
+# ------------------------------------------------------------------------------
+# [sources] — log inputs
+# ------------------------------------------------------------------------------
+# Schema:
+#   [sources.<name>]
+#   type   = "file" | "kmsg" | "journal"
+#   parser = "<name from [parsers.*]>"
+#   <type-specific options>
+
+[sources.system_messages]
+type = "file"
+path = "/var/log/messages"
+parser = "bsd"
+# Continue from last persisted offset across restarts (default).
+from_beginning = false
+# Track logrotate-style rotations.
+follow_rotation = true
+# Reject symlink targets unless explicitly opted in.
+follow_symlinks = false
+
+[sources.syslog_modern]
+type = "file"
+path = "/var/log/syslog"
+parser = "rfc5424"
+
+[sources.kernel]
+type = "kmsg"
+parser = "kmsg"
+
+[sources.systemd_journal]
+type = "journal"
+path = "/var/log/journal"
+parser = "journal"
+# Optional unit allowlist — empty = no filter.
+units = ["myapp.service", "network.service"]
+# Drop entries strictly more verbose than this (0=emerg .. 7=debug).
+min_priority = 4
+
+
+# ------------------------------------------------------------------------------
+# [transport] — MQTT broker, mTLS materials
+# ------------------------------------------------------------------------------
+[transport]
+# Broker URL. Plaintext schemes (tcp://, mqtt://) are rejected.
+mqtt_broker = "tls://mqtt.acme-corp.example:8883"
+
+# mTLS identity (REQUIRED — no fallback).
+client_cert = "/etc/blackboxd/certs/device.crt"
+client_key  = "/etc/blackboxd/certs/device.key"
+ca_cert     = "/etc/blackboxd/certs/ca.crt"
+
+# Optional cert pinning by SHA-256 fingerprint of the broker leaf cert.
+# Accepts the openssl style "aa:bb:..." or plain hex. Empty = no pin.
+# broker_cert_pin = "aa:bb:cc:dd:ee:ff:..."
+
+# QoS for the logs and heartbeat topics. Must be 0..2.
+qos_logs = 1
+qos_heartbeat = 0
+
+# Heartbeat interval. Zero = disabled.
+heartbeat_interval = "30s"
+
+
+# ------------------------------------------------------------------------------
+# [buffer] — in-memory ring + batch policy
+# ------------------------------------------------------------------------------
+[buffer]
+# Max entries in memory before oldest are dropped.
+max_entries = 10000
+# Max bytes (whichever cap hits first).
+max_bytes = 4194304       # 4 MiB
+# Hard line-length cap; longer lines are truncated and flagged.
+max_line_bytes = 65536    # 64 KiB
+# Batch flush triggers (whichever fires first).
+batch_size = 100
+batch_interval = "5s"
+
+
+# ------------------------------------------------------------------------------
+# [spool] — disk fallback when MQTT is unreachable
+# ------------------------------------------------------------------------------
+[spool]
+# Hard cap. FIFO eviction; dropped entries are counted in metrics.
+max_size_bytes = 104857600  # 100 MiB
+
+
+# ------------------------------------------------------------------------------
+# [rate_limit] — per-source token bucket
+# ------------------------------------------------------------------------------
+[rate_limit]
+per_source_lines_per_sec = 10000
+
+
+# ------------------------------------------------------------------------------
+# [shutdown] — graceful shutdown timing
+# ------------------------------------------------------------------------------
+[shutdown]
+# Max time to flush in-memory buffer to MQTT on SIGTERM/SIGINT before
+# spilling to spool.
+timeout = "10s"

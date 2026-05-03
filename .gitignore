@@ -1,0 +1,19 @@
+# Build artefacts
+/blackboxd
+/blackboxd.repro1
+/blackboxd.repro2
+/dist/
+
+# Go test/coverage output
+*.out
+*.test
+coverage.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Claude
+.claude/
